@@ -1,61 +1,52 @@
 """ Module to scrap the data of all the LEDs from given website """
-import scrapy
+from scrapy.spiders import CrawlSpider, Rule
+from scrapy.linkextractors import LinkExtractor
 from scrapy.loader import ItemLoader
 from LED_data_scrapper.items import ProductItem
 
-class ProductsSpider(scrapy.Spider):
+class ProductsSpider(CrawlSpider):
     """
     Spider class for Product, here only scrapping LED data
     """
 
     name = "products"
-    custom_settings = {"FEEDS": {"results.json": {"format": "json"}}}
+    allowed_domains = ['pakistanistores.com', 'www.mega.pk', 'www.aysonline.pk']
+    start_urls =[
+        'https://pakistanistores.com/prices/home-appliances/led-tv-prices',
+        ]
+    custom_settings = {"FEEDS": {"output.json": {"format": "json"}}}
 
-    def start_requests(self):
-        return [scrapy.Request('https://pakistanistores.com/prices/home-appliances/led-tv-prices',
-                                   callback=self.parse)]
+    le_product_details = LinkExtractor(restrict_xpaths=('//*[@class = "row search-ul"]/li/a'))
 
-    def parse(self, response):
-        # pylint: disable=arguments-differ
-        """ Parsing function for products """
-        products = response.xpath('//*[@class="col-md-3 col-md-3 col-sm-6 col-xs-6"]')
+    le_next = LinkExtractor(
+                            restrict_xpaths=('//*[@class=" active"]/following::a[1]'),
+                            attrs=("data-href"))
 
-        for product in products:
-            loader = ItemLoader( item= ProductItem(), selector= product)
-            self.parse_link(loader)
-            product_item = loader.load_item()
-            product_url = product.xpath('.//*[@rel="nofollow"]/@href').get()
-            # Scrap details of the product from the product detail page
-            yield response.follow(
-                product_url,
-                self.parse_product_details,
-                meta={'product_item': product_item})
-
-        pagination_links = response.xpath('//*[@class = "page-link navigate"]/@data-href').getall()
-        for anchor in pagination_links:
-            new_url = response.urljoin (anchor)
-            yield response.follow(new_url, callback = self.parse)  # To scrap Next pages
-
+    rule_product_details = Rule(link_extractor=le_product_details,
+                                callback='parse_product_details',
+                                follow=False)
+    rule_next_page = Rule(link_extractor=le_next,
+                          follow=True)
+    rules = (
+        rule_product_details,
+        rule_next_page,
+    )
 
     def parse_product_details(self, response):
         """ Parsing Image details """
-        product_item = response.meta['product_item']
-        loader = ItemLoader(item= product_item, response=response)
+        loader = ItemLoader(item= ProductItem(), response=response)
         self.parse_name(loader)
         self.parse_price(loader)
         self.parse_image_link(loader)
         self.parse_description(loader)
+        loader.add_value('link', response.url)
         yield loader.load_item()
-
-    def parse_link(self,loader):
-        """ Parse link of LED details page """
-        loader.add_xpath('link', './/*[@rel="nofollow"]/@href')
 
     def parse_name(self, loader):
         """ Parse name of LED """
         loader.add_xpath('name',
-        '//*[@class = "inline blockOnPhone"]/text()\
-        | //*[@class = "product_title entry-title wd-entities-title"]/text()\
+        '//h1[@class = "inline blockOnPhone"]/text()\
+        | //*[contains(@class, "product_title")]/text()\
         | //*[@class = "product-title" ]/text()\
         ')
 
@@ -66,7 +57,7 @@ class ProductsSpider(scrapy.Spider):
         | //*[@class = "woocommerce-product-details__short-description"]/ul/li/strong/text()\
         | //*[@class = "woocommerce-product-details__short-description"]/p/text()\
         | //*[@id = "divInfo"]/p/text()\
-        | //*[@class = "item_desc text-justify margint-20"]/text()')
+        | //*[contains(@class ,"item_desc")]/text()')
 
     def parse_price(self, loader):
         """ Parse price of each LED """
@@ -79,13 +70,6 @@ class ProductsSpider(scrapy.Spider):
     def parse_image_link(self, loader):
         """ Parse image link of each LED """
         loader.add_xpath('image_link',
-        '//*[@class = "img-responsive padding-10 center-block"]/@src\
-        | //*[@class = "wp-post-image wp-post-image"]/@src \
+        '//*[contains(@class ,"img-responsive")]/@src\
+        | //*[contains(@class,"wp-post-image")]/@src \
         | //*[@id ="mainImage"]/@src')
-
-    def parse_next_pages(self, response):
-        """ To parse Next pages of the website """
-        pagination_links = response.xpath('//a[@class = "page-link navigate"]/@data-href').getall()
-        for anchor in pagination_links:
-            new_url = response.urljoin (anchor)
-            yield response.follow(new_url, callback = self.parse)  # To scrap Next pages
